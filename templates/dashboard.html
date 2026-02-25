@@ -1,0 +1,1187 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <title>SYSTEM KERNEL :: NODE 3.14 :: ACTIVITY MONITOR</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <style>
+        /* CSS Existente (manter) */
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+        :root {
+            --matrix-green: #0F0;
+            --scanline-color: rgba(0, 255, 0, 0.1);
+            --dark-bg: #000;
+            --terminal-text: #ddd;
+            --red-alert: #f00;
+        }
+        body {
+            background-color: var(--dark-bg); color: var(--terminal-text); font-family: 'VT323', monospace;
+            font-size: 18px; margin: 0; padding: 20px; overflow-y: auto; overflow-x: hidden;
+            text-shadow: 0 0 5px var(--matrix-green); cursor: none;
+        }
+        body::after {
+            content: " "; display: block; position: fixed; top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(to bottom, transparent 50%, var(--scanline-color) 51%);
+            background-size: 100% 4px; z-index: 100; pointer-events: none; animation: scanline 10s linear infinite;
+        }
+        .custom-cursor {
+            position: fixed; width: 10px; height: 20px; background-color: var(--matrix-green);
+            pointer-events: none; z-index: 99999; animation: blink 1s infinite; transition: background-color 0.2s;
+        }
+        #matrix-canvas {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header {
+            border-bottom: 2px solid var(--matrix-green); padding-bottom: 10px; margin-bottom: 20px; text-align: left;
+        }
+        h1 {
+            color: var(--matrix-green); font-size: 2.5rem; display: inline-block; overflow: hidden; white-space: nowrap;
+            border-right: 3px solid var(--matrix-green);
+            animation: typing 4s steps(40, end) forwards, blink-caret .75s step-end infinite; width: 0;
+        }
+        .access-card {
+            background: rgba(0, 0, 0, 0.5); border: 1px solid #2a2a2a;
+            padding: 15px; margin-bottom: 15px; cursor: none;
+            transition: background-color 0.2s, box-shadow 0.2s, border-color 0.2s; /* Adicionado border-color para transição */
+        }
+        .access-card:hover {
+            background-color: rgba(0, 255, 0, 0.1); box-shadow: 0 0 15px rgba(0, 255, 0, 0.4);
+            animation: glitch 0.3s linear infinite;
+        }
+        .ip-address { color: var(--matrix-green); font-weight: bold; font-size: 1.5rem; animation: text-flicker 3s linear infinite; }
+        
+        .live-ticker {
+            border: 1px dashed #333;
+            background-color: rgba(0, 0, 0, 0.2);
+            padding: 10px; margin-bottom: 20px;
+            height: 190px; /* <--- AJUSTADO PARA 4 IPS */
+            overflow: visible; position: relative;
+            max-width: 100%;
+            box-sizing: border-box;
+        }
+        .live-ticker h3 { margin: 0 0 10px; color: var(--matrix-green); }
+        .attack-feed-status {
+            color: #9f9;
+            font-size: 0.95rem;
+            margin-bottom: 6px;
+        }
+        #attack-terminal {
+            height: 140px;
+            overflow-y: auto;
+            padding: 0 6px 0 0;
+            font-size: 0.95rem;
+            line-height: 1.2;
+            text-shadow: 0 0 6px rgba(0, 255, 0, 0.25);
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+        .attack-terminal-line {
+            margin: 0;
+            padding: 2px 0;
+            white-space: pre-wrap;
+            overflow: visible;
+            animation: fadeIn 0.4s ease-out;
+        }
+        .attack-terminal-line .attack-ts { color: #7f7; }
+        .attack-terminal-line .attack-level { color: #ff0; }
+        .attack-terminal-line .attack-type { color: #9f9; }
+        .attack-terminal-line .attack-ip { color: var(--matrix-green); }
+        .attack-terminal-line.level-info { color: #bfb; }
+        .attack-terminal-line.level-warn { color: #ff0; }
+        .attack-terminal-line.level-high { color: var(--red-alert); }
+        .live-ticker strong { color: #ff0; }
+
+        #attack-map {
+            height: 400px; margin-top: 40px;
+            border: 1px solid var(--matrix-green); background-color: #050505;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.2);
+        }
+        .leaflet-container { font-family: 'VT323', monospace !important; }
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+            background: #050505 !important; color: var(--matrix-green) !important;
+            border: 1px solid var(--matrix-green); text-shadow: 0 0 5px var(--matrix-green);
+        }
+        .attack-line { stroke-dasharray: 5, 10; animation: dash 2s linear infinite; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 10000; padding: 20px; align-items: center; justify-content: center; }
+        .modal-content {
+            background: #050505; border: 1px solid var(--matrix-green);
+            max-width: 900px; width: 100%; max-height: 90vh;
+            display: flex; flex-direction: column;
+            box-shadow: 0 0 20px var(--matrix-green); animation: boot-up 0.5s ease-out;
+            position: fixed; top: 5vh; left: 50%; transform: translateX(-50%);
+            box-sizing: border-box;
+        }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; border-bottom: 1px solid var(--matrix-green); }
+        .modal-header h2 { margin: 0; color: var(--matrix-green); }
+        .close-btn { background:var(--red-alert); color:#fff; border:none; padding: 5px 10px; font-family:'VT323'; font-size: 18px; cursor: none; }
+        .dossier-body {
+            display: grid; grid-template-columns: 300px 1fr; gap: 20px;
+            flex: 1; overflow-y: auto; overflow-x: hidden;
+            padding: 20px 26px 20px 20px;
+            -webkit-overflow-scrolling: touch;
+            box-sizing: border-box; max-width: 100%;
+        }
+        .info-block { background: transparent; border: 1px solid #222; padding: 15px; }
+        .info-block h3 { margin: 0 0 10px 0; color: var(--matrix-green); border-bottom: 1px dashed #333; padding-bottom: 5px; }
+        .info-block strong { color: var(--matrix-green); }
+        .intel-signal-list {
+            margin: 4px 0 0 10px;
+            padding: 0;
+            list-style: none;
+            font-size: 0.9em;
+            color: #aaa;
+        }
+        .intel-signal-list li { margin-bottom: 2px; }
+        .history-log { overflow-y: auto; height: calc(90vh - 250px); }
+        .history-item { border-bottom: 1px solid #222; padding: 8px 2px; }
+        .history-item .method-GET { color: var(--matrix-green); }
+        .history-item .method-POST { color: #ff0; }
+        .history-item .method-fallback { color: var(--red-alert); }
+
+        .dossier-body::-webkit-scrollbar { width: 6px; }
+        .dossier-body::-webkit-scrollbar-thumb { background: rgba(0,255,120,0.4); }
+        
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes typing { from { width: 0 } to { width: 100% } }
+        @keyframes blink-caret { from, to { border-color: transparent } 50% { border-color: var(--matrix-green); } }
+        @keyframes blink { 50% { opacity: 0; } }
+        @keyframes text-flicker { 0% { opacity: 0.8; } 5% { opacity: 1; } 10% { opacity: 0.7; } 100% { opacity: 0.9; } }
+        @keyframes scanline { 100% { transform: translateY(100%); } }
+        @keyframes boot-up { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        @keyframes glitch { 2%,64% { transform: translate(2px,0) skew(0deg); } 4%,60% { transform: translate(-2px,0) skew(0deg); } 62% { transform: translate(0,0) skew(5deg); } }
+        @keyframes dash { to { stroke-dashoffset: -20; } }
+
+        /* =================================================== */
+        /*           NOVOS ESTILOS PARA OS RESUMOS             */
+        /* =================================================== */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .summary-box {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid #2a2a2a;
+            padding: 15px;
+            cursor: pointer; /* Indicar que é clicável */
+            transition: background-color 0.2s, box-shadow 0.2s;
+            position: relative; /* Para o content */
+        }
+        .summary-box:hover {
+            background-color: rgba(0, 255, 0, 0.1);
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.4);
+            animation: glitch 0.3s linear infinite;
+        }
+        .summary-box h3 {
+            margin: 0 0 10px;
+            color: var(--matrix-green);
+            border-bottom: 1px dashed #333;
+            padding-bottom: 5px;
+            font-size: 1.2rem;
+        }
+        .summary-box p { /* Ajustado para melhor espaçamento com a lista */
+            margin: 5px 0 0;
+            color: var(--terminal-text);
+        }
+        .summary-box strong {
+            color: #ff0; /* Amarelo para números */
+        }
+        /* Novo estilo para as listas de pré-visualização */
+        .summary-box ul {
+            margin: 5px 0 0 10px; /* Recuo e espaçamento */
+            padding: 0;
+            list-style: none; /* Remove bullet points padrão */
+            font-size: 0.9em; /* Tamanho da fonte menor para a lista */
+            color: #aaa; /* Cor um pouco mais suave */
+        }
+        .summary-box ul li {
+            margin-bottom: 2px;
+            white-space: nowrap; /* Impede que o texto quebre linha */
+            overflow: hidden;    /* Esconde o texto que excede o container */
+            text-overflow: ellipsis; /* Adiciona "..." no final do texto cortado */
+        }
+
+        /* NOVO: Estilos para IPs identificados como humanos */
+        .access-card.human-ip {
+            border-color: #00FFFF; /* Um tom de azul ciano para "human" */
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.5); /* Sombra para destacar */
+        }
+        .human-indicator {
+            color: #00FFFF; /* Cor do texto "HUMAN" */
+            font-weight: bold;
+        }
+
+        /* =================================================== */
+        /*               ESTILOS RESPONSIVOS                   */
+        /* =================================================== */
+        @media (max-width: 768px) {
+            body {
+                font-size: 16px;
+                padding: 10px;
+            }
+            h1 {
+                font-size: 1.8rem;
+            }
+            .live-ticker {
+                height: 160px; /* Pode precisar de ajuste fino aqui para mobile */
+            }
+            .modal-overlay {
+                padding: 10px;
+            }
+            .modal-content {
+                width: 100%;
+                max-height: 95vh;
+            }
+            .dossier-body {
+                grid-template-columns: 1fr;
+                overflow-y: auto;
+                padding: 15px 21px 15px 15px;
+                max-height: 75vh;
+            }
+            .info-block {
+                margin-bottom: 15px;
+            }
+            .history-log {
+                height: auto;
+                max-height: 250px;
+            }
+            #attack-map {
+                height: 300px;
+            }
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+            .summary-box h3 {
+                font-size: 1.1rem;
+            }
+        }
+        @media (max-width: 480px) {
+            .live-ticker {
+                height: auto;
+                padding: 8px;
+            }
+            #attack-terminal {
+                font-size: 11px;
+                padding: 8px;
+                max-height: 38vh;
+                line-height: 1.25;
+            }
+        }
+
+        /* =================================================== */
+        /*            Estilos do Novo Modal Genérico           */
+        /* =================================================== */
+        #genericDataModal .modal-content {
+            max-width: 90%; /* Ajuste a largura máxima conforme necessário */
+        }
+        #genericDataModal .dossier-body {
+            grid-template-columns: 1fr; /* Modal genérico com uma coluna para facilitar a lista */
+            overflow-y: auto; /* Scroll para o conteúdo */
+        }
+        #genericDataModal .info-block {
+            border: none; /* Remove a borda dupla */
+            padding: 0;
+        }
+        #genericDataModal .data-list {
+            max-height: calc(90vh - 120px); /* Ajusta a altura da lista com scroll */
+            overflow-y: auto;
+            border: 1px solid #222; /* Borda para a área de scroll */
+            padding: 10px;
+        }
+        #genericDataModal .data-item {
+            border-bottom: 1px dashed #333;
+            padding: 8px 0;
+            margin-bottom: 5px;
+        }
+        #genericDataModal .data-item:last-child {
+            border-bottom: none;
+        }
+        #genericDataModal .data-item strong {
+            color: var(--matrix-green);
+        }
+        #genericDataModal .data-item ul {
+            margin: 5px 0 0 20px;
+            padding: 0;
+            list-style: none;
+            font-size: 0.9em;
+            color: #aaa;
+        }
+        #genericDataModal .data-item ul li {
+            margin-bottom: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="custom-cursor"></div>
+    <canvas id="matrix-canvas"></canvas>
+
+    <div class="container">
+        <div class="header">
+            <h1>> SYSTEM_ACTIVITY_MONITOR_</h1>
+        </div>
+        
+        <div class="live-ticker" id="live-ticker">
+            <h3>// LIVE_ATTACK_FEED</h3>
+            <div id="attack-feed-status" class="attack-feed-status">> STATUS: CONNECTING...</div>
+            <div id="attack-terminal" role="log" aria-live="polite">
+                <div class="attack-terminal-line level-info">> Awaiting incoming data stream...</div>
+            </div>
+        </div>
+
+        <!-- Nova seção para os resumos clicáveis -->
+        <div class="summary-grid">
+            <div class="summary-box" data-endpoint="/data/top-locations" data-title="// TOP_LOCATIONS">
+                <h3>// TOP_LOCATIONS</h3>
+                <p id="summary-top-locations"></p> <!-- Será preenchido pelo JS -->
+            </div>
+            <div class="summary-box" data-endpoint="/data/device-profiles" data-title="// DEVICE_PROFILES">
+                <h3>// DEVICE_PROFILES</h3>
+                <p>Distinct Profiles: <strong id="summary-device-profiles">0</strong></p>
+            </div>
+            <div class="summary-box" data-endpoint="/data/top-targets" data-title="// TOP_TARGETS">
+                <h3>// TOP_TARGETS</h3>
+                <p id="summary-top-targets"></p> <!-- Será preenchido pelo JS -->
+            </div>
+            <div class="summary-box" data-endpoint="/data/human-interaction" data-title="// HUMAN_INTERACTION">
+                <h3>// HUMAN_INTERACTION</h3>
+                <p>Identified Humans: <strong id="summary-human-interaction">0</strong></p>
+            </div>
+            <div class="summary-box" data-endpoint="/data/malicious-targets" data-title="// TOP_MALICIOUS_TARGETS">
+                <h3>// TOP_MALICIOUS_TARGETS</h3>
+                <p id="summary-top-malicious-targets"></p> <!-- Será preenchido pelo JS -->
+            </div>
+            <div class="summary-box" data-endpoint="/data/blacklisted-nodes" data-title="// TOP_BLACKLISTED_NODES">
+                <h3>// TOP_BLACKLISTED_NODES</h3>
+                <p>Blacklisted Nodes: <strong id="summary-blacklisted-nodes">0</strong></p>
+            </div>
+            <div class="summary-box" data-endpoint="/data/unusual-methods" data-title="// UNUSUAL_METHODS">
+                <h3>// UNUSUAL_METHODS</h3>
+                <p id="summary-unusual-methods"></p> <!-- Será preenchido pelo JS -->
+            </div>
+        </div>
+        <!-- Fim da nova seção para os resumos clicáveis -->
+
+
+        <div id="accessList">
+            {% include 'access_list_partial.html' %}
+        </div>
+        
+        <div id="attack-map"></div>
+    </div>
+
+    <!-- Modal existente para detalhes de IP -->
+    <div id="intelModal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="intelTitle">...</h2>
+                <button class="close-btn" onclick="closeIntelModal()">[X]</button>
+            </div>
+            <div class="dossier-body">
+                <div class="info-block">
+                    <h3>// INTEL_SUMMARY</h3>
+                    <p><strong>NODE_ID:</strong> <span id="intelIp"></span></p>
+                    <p><strong>GRID_LOCATION:</strong> <span id="intelLocation"></span></p>
+                    <p><strong>PROVIDER:</strong> <span id="intelIsp"></span></p>
+                    <hr style="border-color: #333;">
+                    <p><strong>THREAT_LEVEL:</strong> <span id="intelThreat"></span>%</p>
+                    <p><strong>FIRST_CONTACT:</strong> <span id="intelFirstSeen"></span></p>
+                    <p><strong>LAST_PING:</strong> <span id="intelLastSeen"></span></p>
+                    <p><strong>REQUEST_COUNT:</strong> <span id="intelTotalHits"></span></p>
+                    <hr style="border-color: #333;">
+                    <p id="intelTelemetryEmpty" style="display:none;">> NO CLIENT TELEMETRY RECEIVED.</p>
+                    <div id="intelTelemetrySections">
+                        <h3>// DEVICE_PROFILE</h3>
+                        <p><strong>VIEWPORT:</strong> <span id="intelViewport"></span></p>
+                        <p><strong>SCREEN:</strong> <span id="intelScreen"></span></p>
+                        <p><strong>DPR:</strong> <span id="intelDpr"></span></p>
+                        <p><strong>PLATFORM:</strong> <span id="intelPlatform"></span></p>
+                        <p><strong>LANGUAGE:</strong> <span id="intelLanguage"></span></p>
+                        <p><strong>TIMEZONE_OFFSET:</strong> <span id="intelTimezone"></span></p>
+                        <p><strong>TOUCH_SUPPORT:</strong> <span id="intelTouch"></span></p>
+                        <h3>// NETWORK_HINTS</h3>
+                        <p><strong>EFFECTIVE_TYPE:</strong> <span id="intelConnType"></span></p>
+                        <p><strong>RTT:</strong> <span id="intelConnRtt"></span></p>
+                        <p><strong>DOWNLINK:</strong> <span id="intelConnDownlink"></span></p>
+                        <h3>// HUMAN_SIGNAL</h3>
+                        <p><strong>CLICKS:</strong> <span id="intelClicks"></span></p>
+                        <p><strong>SCROLL_PX:</strong> <span id="intelScroll"></span></p>
+                        <p><strong>DWELL_SECONDS:</strong> <span id="intelDwell"></span></p>
+                        <p><strong>VISIBILITY_CHANGES:</strong> <span id="intelVisibility"></span></p>
+                        <p><strong>TELEMETRY_LAST_UPDATE:</strong> <span id="intelTelemetryUpdated"></span></p>
+                    </div>
+                    <hr style="border-color: #333;">
+                    <h3>// HUMAN_CONFIDENCE</h3>
+                    <p><strong>HUMAN_SCORE:</strong> <span id="intelHumanScore">N/A</span></p>
+                    <p><strong>HUMAN_CLASS:</strong> <span id="intelHumanClass">N/A</span></p>
+                    <p><strong>SIGNALS:</strong></p>
+                    <ul id="intelHumanSignals" class="intel-signal-list"></ul>
+                    <p id="intelHumanSignalsEmpty" style="display:none;">> NO SIGNALS AVAILABLE.</p>
+                    <p><strong>UPDATED_AT:</strong> <span id="intelHumanUpdated">N/A</span></p>
+                    <hr style="border-color: #333;">
+                    <p id="intelNetEmpty" style="display:none;">> NO NETWORK INTEL AVAILABLE YET (RESOLVING...).</p>
+                    <div id="intelNetSection">
+                        <h3>// NETWORK_INTEL</h3>
+                        <p><strong>RDNS:</strong> <span id="intelRdns"></span></p>
+                        <p><strong>ASN:</strong> <span id="intelAsn"></span></p>
+                        <p><strong>ORG:</strong> <span id="intelOrg"></span></p>
+                        <p><strong>NETWORK_TYPE:</strong> <span id="intelNetworkType"></span></p>
+                        <p><strong>FLAGS:</strong> <span id="intelNetFlags"></span></p>
+                        <p><strong>NODE_CLASS:</strong> <span id="intelNodeClass"></span></p>
+                    </div>
+                </div>
+                <div class="info-block">
+                    <h3>// ACTIVITY_LOG</h3>
+                    <div class="history-log" id="intelHistory"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NOVO MODAL GENÉRICO PARA OS DETALHES -->
+    <div id="genericDataModal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="genericModalTitle">...</h2>
+                <button class="close-btn" onclick="closeGenericDataModal()">[X]</button>
+            </div>
+            <div class="dossier-body">
+                <div class="info-block">
+                    <div class="data-list" id="genericDataContent">
+                        <!-- Conteúdo detalhado será inserido aqui pelo JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- CURSOR E CHUVA DIGITAL --- (Manter existente)
+        const cursor = document.querySelector('.custom-cursor');
+        window.addEventListener('mousemove', e => { cursor.style.left = e.clientX + 'px'; cursor.style.top = e.clientY + 'px'; });
+        const canvas = document.getElementById('matrix-canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+        const alphabet = 'アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッンABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        const fontSize = 16; const columns = canvas.width / fontSize; const rainDrops = [];
+        for (let x = 0; x < columns; x++) { rainDrops[x] = 1; }
+        const drawMatrix = () => {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.05)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#0F0'; ctx.font = fontSize + 'px VT323';
+            for (let i = 0; i < rainDrops.length; i++) {
+                const text = alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+                ctx.fillText(text, i * fontSize, rainDrops[i] * fontSize);
+                if (rainDrops[i] * fontSize > canvas.height && Math.random() > 0.975) { rainDrops[i] = 0; }
+                rainDrops[i]++;
+            }
+        };
+        setInterval(drawMatrix, 33);
+
+        // --- LÓGICA DO MAPA DE ATAQUES --- (Manter existente)
+        let attackMap; const yourLocation = [-14.2350, -51.9253]; const mapLayers = [];
+        function initAttackMap() {
+            attackMap = L.map('attack-map', { zoomControl: false, attributionControl: false }).setView([20, 0], 2);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(attackMap);
+            const serverIcon = L.divIcon({ className: 'server-marker', html: '<div style="background: #0f0; width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 10px #0f0;"></div>', iconSize: [12, 12] });
+            L.marker(yourLocation, {icon: serverIcon}).addTo(attackMap).bindPopup('<b>> NODE_CENTRAL</b>');
+        }
+        function updateMap() {
+            fetch('/map-data').then(response => response.json()).then(data => {
+                mapLayers.forEach(layer => attackMap.removeLayer(layer)); mapLayers.length = 0;
+                data.forEach(access => {
+                    if (!access.lat || !access.lon) return;
+                    const origin = [access.lat, access.lon];
+                    const color = access.threat_level > 70 ? 'var(--red-alert)' : access.threat_level > 40 ? '#ff0' : 'var(--matrix-green)';
+                    const line = L.polyline([origin, yourLocation], { color: color, weight: 1.5, className: 'attack-line' }).addTo(attackMap);
+                    mapLayers.push(line);
+                    const marker = L.circleMarker(origin, { radius: 4, fillColor: color, color: '#fff', weight: 1, fillOpacity: 0.8 }).addTo(attackMap).bindPopup(`<b>${access.ip}</b><br>${access.location}`);
+                    mapLayers.push(marker);
+                });
+            });
+        }
+        
+        // --- FUNÇÕES DO MODAL DE INTEL (IP) --- (Manter existente)
+        function formatIntelValue(value, fallback = 'N/A') {
+            if (value === undefined || value === null || value === '') {
+                return fallback;
+            }
+            return value;
+        }
+
+        function formatIntelBool(value) {
+            if (value === undefined || value === null) return 'N/A';
+            return value ? 'YES' : 'NO';
+        }
+
+        function showIntelModal(ip) {
+            dossierOpenSound.play().catch(e => console.log("Audio play blocked."));
+            const modal = document.getElementById('intelModal');
+            modal.style.display = 'flex';
+            document.getElementById('intelTitle').textContent = `LOADING_DATA: ${ip}...`;
+            fetch(`/intel/${ip}`).then(response => response.json()).then(data => {
+                if (data.error) { throw new Error(data.error); }
+                document.getElementById('intelTitle').textContent = `// DOSSIER_NODE: ${data.ip}`;
+                document.getElementById('intelIp').textContent = data.ip;
+                document.getElementById('intelLocation').textContent = data.geo_info.location;
+                document.getElementById('intelIsp').textContent = data.geo_info.isp;
+                document.getElementById('intelThreat').textContent = data.threat_level;
+                document.getElementById('intelFirstSeen').textContent = data.first_seen;
+                document.getElementById('intelLastSeen').textContent = data.last_seen;
+                document.getElementById('intelTotalHits').textContent = data.total_hits;
+
+                const telemetry = data.telemetry || {};
+                const telemetrySections = document.getElementById('intelTelemetrySections');
+                const telemetryEmpty = document.getElementById('intelTelemetryEmpty');
+                const hasTelemetry = telemetry && Object.keys(telemetry).length > 0;
+
+                if (!hasTelemetry) {
+                    telemetryEmpty.style.display = 'block';
+                    telemetrySections.style.display = 'none';
+                } else {
+                    telemetryEmpty.style.display = 'none';
+                    telemetrySections.style.display = 'block';
+
+                    const viewport = (telemetry.viewportWidth && telemetry.viewportHeight) ? `${telemetry.viewportWidth}x${telemetry.viewportHeight}` : 'N/A';
+                    const screenSize = (telemetry.screenWidth && telemetry.screenHeight) ? `${telemetry.screenWidth}x${telemetry.screenHeight}` : 'N/A';
+                    const dpr = telemetry.devicePixelRatio !== undefined ? telemetry.devicePixelRatio : 'N/A';
+                    const platform = telemetry.uaPlatform && telemetry.platform && telemetry.uaPlatform !== telemetry.platform
+                        ? `${telemetry.uaPlatform} (${telemetry.platform})`
+                        : (telemetry.uaPlatform || telemetry.platform);
+
+                    document.getElementById('intelViewport').textContent = formatIntelValue(viewport);
+                    document.getElementById('intelScreen').textContent = formatIntelValue(screenSize);
+                    document.getElementById('intelDpr').textContent = formatIntelValue(dpr);
+                    document.getElementById('intelPlatform').textContent = formatIntelValue(platform);
+                    document.getElementById('intelLanguage').textContent = formatIntelValue(telemetry.language);
+                    document.getElementById('intelTimezone').textContent = formatIntelValue(telemetry.timezoneOffsetMinutes);
+                    document.getElementById('intelTouch').textContent = formatIntelBool(telemetry.touchSupport);
+
+                    document.getElementById('intelConnType').textContent = formatIntelValue(telemetry.connectionEffectiveType);
+                    document.getElementById('intelConnRtt').textContent = telemetry.connectionRtt !== undefined ? `${telemetry.connectionRtt} ms` : 'N/A';
+                    document.getElementById('intelConnDownlink').textContent = telemetry.connectionDownlink !== undefined ? `${telemetry.connectionDownlink} Mbps` : 'N/A';
+
+                    document.getElementById('intelClicks').textContent = formatIntelValue(telemetry.clickCount, '0');
+                    document.getElementById('intelScroll').textContent = formatIntelValue(telemetry.scrollPx, '0');
+                    document.getElementById('intelDwell').textContent = formatIntelValue(telemetry.dwellSeconds, '0');
+                    document.getElementById('intelVisibility').textContent = formatIntelValue(telemetry.visibilityChanges, '0');
+                    document.getElementById('intelTelemetryUpdated').textContent = formatIntelValue(telemetry.received_at);
+                }
+
+                const humanScore = data.human_confidence;
+                const humanClass = data.human_class;
+                const humanSignals = Array.isArray(data.human_signals) ? data.human_signals : [];
+                const humanUpdatedAt = data.human_confidence_updated_at;
+
+                document.getElementById('intelHumanScore').textContent = (typeof humanScore === 'number') ? `${humanScore}%` : 'N/A';
+                document.getElementById('intelHumanClass').textContent = humanClass || 'N/A';
+                document.getElementById('intelHumanUpdated').textContent = humanUpdatedAt || 'N/A';
+
+                const signalsList = document.getElementById('intelHumanSignals');
+                const signalsEmpty = document.getElementById('intelHumanSignalsEmpty');
+                signalsList.innerHTML = '';
+                if (humanSignals.length === 0) {
+                    signalsEmpty.style.display = 'block';
+                } else {
+                    signalsEmpty.style.display = 'none';
+                    humanSignals.forEach(signal => {
+                        const li = document.createElement('li');
+                        li.textContent = signal;
+                        signalsList.appendChild(li);
+                    });
+                }
+
+                const netIntel = data.net_intel || {};
+                const netEmpty = document.getElementById('intelNetEmpty');
+                const netSection = document.getElementById('intelNetSection');
+                const hasNetIntel = netIntel && Object.keys(netIntel).length > 0;
+
+                if (!hasNetIntel) {
+                    netEmpty.style.display = 'block';
+                    netSection.style.display = 'none';
+                } else {
+                    netEmpty.style.display = 'none';
+                    netSection.style.display = 'block';
+                    document.getElementById('intelRdns').textContent = formatIntelValue(netIntel.rdns);
+                    document.getElementById('intelAsn').textContent = formatIntelValue(netIntel.asn);
+                    document.getElementById('intelOrg').textContent = formatIntelValue(netIntel.org);
+                    document.getElementById('intelNetworkType').textContent = formatIntelValue(netIntel.network_type);
+                    const flags = `HOSTING=${netIntel.hosting ? 'YES' : 'NO'} PROXY=${netIntel.proxy ? 'YES' : 'NO'} MOBILE=${netIntel.mobile ? 'YES' : 'NO'}`;
+                    document.getElementById('intelNetFlags').textContent = flags;
+                    document.getElementById('intelNodeClass').textContent = formatIntelValue(netIntel.network_type);
+                }
+
+                const historyContainer = document.getElementById('intelHistory');
+                historyContainer.innerHTML = '';
+                if (data.history.length === 0) {
+                    historyContainer.innerHTML = '<p>> NO ANOMALOUS ACTIVITY LOGGED.</p>';
+                } else {
+                    data.history.forEach(item => {
+                        const div = document.createElement('div');
+                        div.className = 'history-item';
+                        const methodClass = `method-${item.method === 'GET' ? 'GET' : item.method === 'POST' ? 'POST' : 'fallback'}`;
+                        div.innerHTML = `<span>${item.timestamp}</span><br><strong class="${methodClass}">${item.method}</strong> <span>${item.path}</span>`;
+                        historyContainer.appendChild(div);
+                    });
+                }
+            }).catch(err => {
+                console.error(">> CONNECTION ERROR: ", err);
+                document.getElementById('intelTitle').textContent = '>> INTEL_SERVER_UNREACHABLE';
+            });
+        }
+
+        function closeIntelModal() {
+            document.getElementById('intelModal').style.display = 'none';
+        }
+
+        // --- FUNÇÕES DO NOVO MODAL GENÉRICO --- (Manter existente)
+        function showGenericDataModal(endpoint, title) {
+            dossierOpenSound.play().catch(e => console.log("Audio play blocked."));
+            const modal = document.getElementById('genericDataModal');
+            modal.style.display = 'flex';
+            document.getElementById('genericModalTitle').textContent = `LOADING_DATA: ${title}...`;
+            const contentContainer = document.getElementById('genericDataContent');
+            contentContainer.innerHTML = '<p>> Fetching data...</p>';
+
+            fetch(endpoint)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('genericModalTitle').textContent = title;
+                    contentContainer.innerHTML = '';
+
+                    if (data.length === 0) {
+                        contentContainer.innerHTML = '<p>> NO DATA AVAILABLE.</p>';
+                        return;
+                    }
+
+                    // Renderiza o conteúdo baseado no endpoint
+                    if (endpoint === '/data/top-locations') {
+                        data.forEach(item => {
+                            const div = document.createElement('div');
+                            div.className = 'data-item';
+                            div.innerHTML = `
+                                <p><strong>LOCATION:</strong> ${item.location}</p>
+                                <p><strong>COUNT:</strong> ${item.count}</p>
+                                <p><strong>NODES:</strong></p>
+                                <ul>${item.ips.map(ip => `<li>${ip}</li>`).join('')}</ul>
+                            `;
+                            contentContainer.appendChild(div);
+                        });
+                    } else if (endpoint === '/data/device-profiles') {
+                        data.forEach(item => {
+                            const div = document.createElement('div');
+                            div.className = 'data-item';
+                            div.innerHTML = `
+                                <p><strong>USER_AGENT:</strong> ${item.user_agent}</p>
+                                <p><strong>TOTAL_REQUESTS:</strong> ${item.total_requests}</p>
+                                <p><strong>UNIQUE_NODES:</strong></p>
+                                <ul>${item.unique_ips.map(ip => `<li>${ip}</li>`).join('')}</ul>
+                            `;
+                            contentContainer.appendChild(div);
+                        });
+                    } else if (endpoint === '/data/top-targets' || endpoint === '/data/malicious-targets') {
+                        data.forEach(item => {
+                            const div = document.createElement('div');
+                            div.className = 'data-item';
+                            div.innerHTML = `
+                                <p><strong>PATH:</strong> ${item.path}</p>
+                                <p><strong>COUNT:</strong> ${item.count}</p>
+                                <p><strong>NODES:</strong></p>
+                                <ul>${item.ips.map(ip => `<li>${ip}</li>`).join('')}</ul>
+                            `;
+                            contentContainer.appendChild(div);
+                        });
+                    } else if (endpoint === '/data/human-interaction' || endpoint === '/data/blacklisted-nodes') {
+                        data.forEach(item => {
+                            const div = document.createElement('div');
+                            div.className = 'data-item';
+                            const threatColor = item.threat_level > 70 ? 'var(--red-alert)' : item.threat_level > 40 ? '#ff0' : 'var(--matrix-green)';
+                            div.innerHTML = `
+                                <p><strong>NODE_ID:</strong> <span class="ip-address">${item.ip}</span></p>
+                                <p><strong>GRID_LOCATION:</strong> ${item.location}</p>
+                                <p><strong>PROVIDER:</strong> ${item.isp}</p>
+                                <p><strong>THREAT_LEVEL:</strong> <span style="color:${threatColor};">${item.threat_level}%</span></p>
+                                <p><strong>REQUEST_COUNT:</strong> ${item.total_hits}</p>
+                            `;
+                            contentContainer.appendChild(div);
+                        });
+                    } else if (endpoint === '/data/unusual-methods') {
+                        data.forEach(item => {
+                            const div = document.createElement('div');
+                            div.className = 'data-item';
+                            div.innerHTML = `
+                                <p><strong>METHOD:</strong> <span style="color:#ff0;">${item.method}</span></p>
+                                <p><strong>TOTAL_USES:</strong> ${item.count}</p>
+                                <p><strong>SAMPLE_REQUESTS:</strong></p>
+                                <ul>${item.requests.map(req => `<li>[${req.timestamp}] <span class="ip-address">${req.ip}</span> -> ${req.path} (${req.user_agent})</li>`).join('')}</ul>
+                            `;
+                            contentContainer.appendChild(div);
+                        });
+                    }
+                })
+                .catch(err => {
+                    console.error(">> GENERIC DATA ERROR: ", err);
+                    document.getElementById('genericModalTitle').textContent = '>> DATA_SERVER_UNREACHABLE';
+                    contentContainer.innerHTML = '<p>> ERROR: Failed to load data.</p>';
+                });
+        }
+
+        function closeGenericDataModal() {
+            document.getElementById('genericDataModal').style.display = 'none';
+        }
+
+        // --- Lógica de Sons --- (Manter existente)
+        const blipSound = new Audio("{{ url_for('static', filename='audio/blip-131856.mp3') }}");
+        const keyboardSound = new Audio("{{ url_for('static', filename='audio/sound-ambience-sonido-ambiente-12-14133.mp3') }}");
+        const dossierOpenSound = new Audio("{{ url_for('static', filename='audio/ui-click-43196.mp3') }}");
+        
+        blipSound.volume = 0.4;
+        keyboardSound.volume = 0.2;
+        keyboardSound.loop = true;
+        dossierOpenSound.volume = 0.5;
+
+        const ATTACK_FEED_MAX_LINES = 150;
+        let attackAutoScroll = true;
+        let attackAudioArmed = false;
+        let lastHighSoundAt = 0;
+        let attackEventSource = null;
+
+        const attackTerminal = document.getElementById('attack-terminal');
+        const attackFeedStatus = document.getElementById('attack-feed-status');
+
+        function setAttackFeedStatus(text) {
+            if (attackFeedStatus) attackFeedStatus.textContent = text;
+        }
+
+        function formatAttackTime(ts) {
+            if (!ts) return '??:??:??';
+            const parts = ts.split(' ');
+            return parts[1] || ts;
+        }
+
+        function playHighAlert() {
+            if (!attackAudioArmed) return;
+            const now = Date.now();
+            if (now - lastHighSoundAt < 800) return;
+            lastHighSoundAt = now;
+            blipSound.currentTime = 0;
+            blipSound.play().catch(e => console.log("Audio play blocked."));
+        }
+
+        function buildAttackLine(ev) {
+            const line = document.createElement('div');
+            const level = (ev.level || 'INFO').toUpperCase();
+            line.className = `attack-terminal-line level-${level.toLowerCase()}`;
+
+            const ts = formatAttackTime(ev.ts);
+            const ip = ev.ip || '?.?.?.?';
+            const location = ev.location || 'resolving...';
+            const message = ev.message || '';
+            const evType = ev.type ? String(ev.type).toUpperCase() : null;
+
+            const tsSpan = document.createElement('span');
+            tsSpan.className = 'attack-ts';
+            tsSpan.textContent = `[${ts}]`;
+
+            const levelSpan = document.createElement('span');
+            levelSpan.className = 'attack-level';
+            levelSpan.textContent = `[${level}]`;
+
+            const typeSpan = document.createElement('span');
+            typeSpan.className = 'attack-type';
+            if (evType) {
+                typeSpan.textContent = `[${evType}]`;
+            }
+
+            const ipSpan = document.createElement('span');
+            ipSpan.className = 'attack-ip';
+            ipSpan.textContent = `[${ip}]`;
+
+            const locSpan = document.createElement('span');
+            locSpan.className = 'attack-location';
+            locSpan.textContent = `[${location}]`;
+
+            line.appendChild(tsSpan);
+            line.appendChild(document.createTextNode(' '));
+            line.appendChild(levelSpan);
+            if (evType) {
+                line.appendChild(document.createTextNode(' '));
+                line.appendChild(typeSpan);
+            }
+            line.appendChild(document.createTextNode(' '));
+            line.appendChild(ipSpan);
+            line.appendChild(document.createTextNode(' '));
+            line.appendChild(locSpan);
+            line.appendChild(document.createTextNode(' '));
+            line.appendChild(document.createTextNode(message));
+
+            return { line, level };
+        }
+
+        function trimAttackTerminal() {
+            if (!attackTerminal) return;
+            while (attackTerminal.children.length > ATTACK_FEED_MAX_LINES) {
+                attackTerminal.removeChild(attackTerminal.firstChild);
+            }
+        }
+
+        function appendAttackLine(ev, options = {}) {
+            if (!attackTerminal) return;
+            const { line, level } = buildAttackLine(ev);
+            attackTerminal.appendChild(line);
+            trimAttackTerminal();
+            if (attackAutoScroll) {
+                attackTerminal.scrollTop = attackTerminal.scrollHeight;
+            }
+            if (!options.muted && level === 'HIGH') {
+                playHighAlert();
+            }
+        }
+
+        function loadInitialAttackEvents() {
+            if (!attackTerminal) return;
+            fetch('/events/latest?limit=50')
+                .then(response => response.json())
+                .then(events => {
+                    attackTerminal.innerHTML = '';
+                    if (!events || events.length === 0) {
+                        const emptyLine = document.createElement('div');
+                        emptyLine.className = 'attack-terminal-line level-info';
+                        emptyLine.textContent = '> Awaiting incoming data stream...';
+                        attackTerminal.appendChild(emptyLine);
+                        return;
+                    }
+                    events.forEach(ev => appendAttackLine(ev, { muted: true }));
+                    attackTerminal.scrollTop = attackTerminal.scrollHeight;
+                })
+                .catch(() => {
+                    attackTerminal.innerHTML = '';
+                    const errorLine = document.createElement('div');
+                    errorLine.className = 'attack-terminal-line level-warn';
+                    errorLine.textContent = '> FEED UNAVAILABLE';
+                    attackTerminal.appendChild(errorLine);
+                });
+        }
+
+        function connectAttackStream() {
+            if (!window.EventSource) {
+                setAttackFeedStatus('> STATUS: SSE NOT SUPPORTED');
+                return;
+            }
+            setAttackFeedStatus('> STATUS: CONNECTING...');
+            attackEventSource = new EventSource('/stream');
+
+            attackEventSource.onopen = () => setAttackFeedStatus('> STATUS: LIVE');
+            attackEventSource.onerror = () => setAttackFeedStatus('> STATUS: RECONNECTING...');
+
+            attackEventSource.addEventListener('attack', (e) => {
+                try {
+                    const ev = JSON.parse(e.data);
+                    appendAttackLine(ev);
+                    setAttackFeedStatus('> STATUS: LIVE');
+                } catch (err) {
+                    console.error("Failed to parse attack event:", err);
+                }
+            });
+        }
+
+        if (attackTerminal) {
+            attackTerminal.addEventListener('scroll', () => {
+                const distanceFromBottom = attackTerminal.scrollHeight - attackTerminal.scrollTop - attackTerminal.clientHeight;
+                attackAutoScroll = distanceFromBottom < 30;
+            });
+        }
+
+        // --- TELEMETRIA DO CLIENTE ---
+        const telemetryState = {
+            clickCount: 0,
+            scrollPx: 0,
+            visibilityChanges: 0,
+            dwellSeconds: 0,
+            keyPressCount: 0
+        };
+        let telemetryStartTime = Date.now();
+        let telemetryResizeTimer = null;
+        let telemetryLastViewport = {
+            w: window.innerWidth,
+            h: window.innerHeight,
+            sw: screen.width,
+            sh: screen.height
+        };
+        let lastScrollY = window.scrollY;
+        let lastTouchAt = 0;
+
+        function buildTelemetryPayload() {
+            const nav = navigator || {};
+            const connection = nav.connection || nav.mozConnection || nav.webkitConnection;
+            const uaPlatform = nav.userAgentData && nav.userAgentData.platform ? nav.userAgentData.platform : null;
+
+            telemetryState.dwellSeconds = Math.floor((Date.now() - telemetryStartTime) / 1000);
+
+            return {
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight,
+                screenWidth: screen.width,
+                screenHeight: screen.height,
+                devicePixelRatio: window.devicePixelRatio || 1,
+                language: nav.language,
+                platform: nav.platform,
+                uaPlatform: uaPlatform,
+                timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+                touchSupport: ('ontouchstart' in window) || (nav.maxTouchPoints || 0) > 0,
+                cookieEnabled: nav.cookieEnabled,
+                doNotTrack: nav.doNotTrack,
+                referrer: document.referrer,
+                connectionEffectiveType: connection ? connection.effectiveType : undefined,
+                connectionDownlink: connection ? connection.downlink : undefined,
+                connectionRtt: connection ? connection.rtt : undefined,
+                path: location.pathname,
+                userAgent: nav.userAgent,
+                clientTs: new Date().toISOString(),
+                clickCount: telemetryState.clickCount,
+                scrollPx: telemetryState.scrollPx,
+                visibilityChanges: telemetryState.visibilityChanges,
+                dwellSeconds: telemetryState.dwellSeconds,
+                keyPressCount: telemetryState.keyPressCount
+            };
+        }
+
+        function sendTelemetry() {
+            const payload = buildTelemetryPayload();
+            fetch('/telemetry', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                keepalive: true
+            }).catch(err => console.error('Telemetry send failed:', err));
+        }
+
+        function scheduleResizeTelemetry() {
+            if (telemetryResizeTimer) clearTimeout(telemetryResizeTimer);
+            telemetryResizeTimer = setTimeout(() => {
+                const w = window.innerWidth;
+                const h = window.innerHeight;
+                const sw = screen.width;
+                const sh = screen.height;
+                if (w !== telemetryLastViewport.w || h !== telemetryLastViewport.h || sw !== telemetryLastViewport.sw || sh !== telemetryLastViewport.sh) {
+                    telemetryLastViewport = { w, h, sw, sh };
+                    sendTelemetry();
+                }
+            }, 800);
+        }
+
+        // --- Lógica de Atualização da Lista Principal de Acessos --- (Manter existente)
+        function updateAccessList() {
+            fetch('/', {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(response => response.text())
+            .then(html => {
+                document.getElementById('accessList').innerHTML = html;
+            })
+            .catch(err => console.error('Failed to update access list:', err));
+        }
+
+        // --- Lógica de Atualização dos Resumos da Dashboard ---
+        function updateSummaryData() {
+            fetch('/summary-data')
+                .then(response => response.json())
+                .then(summary => {
+                    // TOP_LOCATIONS
+                    let topLocsHtml = `Total Locations: <strong>${summary.top_locations.length}</strong>`;
+                    if (summary.top_locations.length > 0) {
+                        topLocsHtml += '<ul>';
+                        summary.top_locations.forEach(item => {
+                            topLocsHtml += `<li>${item.location} (<span style="color:#ff0;">${item.count}</span>x)</li>`;
+                        });
+                        topLocsHtml += '</ul>';
+                    } else {
+                        topLocsHtml += '<p class="detail">No data yet...</p>';
+                    }
+                    document.getElementById('summary-top-locations').innerHTML = topLocsHtml;
+
+                    // DEVICE_PROFILES (somente contagem)
+                    document.getElementById('summary-device-profiles').textContent = summary.device_profiles_count;
+
+                    // TOP_TARGETS
+                    let topTargetsHtml = `Total Paths: <strong>${summary.top_targets.length}</strong>`;
+                    if (summary.top_targets.length > 0) {
+                        topTargetsHtml += '<ul>';
+                        summary.top_targets.forEach(item => {
+                            topTargetsHtml += `<li>${item.path} (<span style="color:#ff0;">${item.count}</span>x)</li>`;
+                        });
+                        topTargetsHtml += '</ul>';
+                    } else {
+                        topTargetsHtml += '<p class="detail">No data yet...</p>';
+                    }
+                    document.getElementById('summary-top-targets').innerHTML = topTargetsHtml;
+
+                    // HUMAN_INTERACTION (somente contagem)
+                    document.getElementById('summary-human-interaction').textContent = summary.human_interactions_count;
+
+                    // TOP_MALICIOUS_TARGETS
+                    let topMaliciousHtml = `Malicious Paths: <strong>${summary.top_malicious_targets.length}</strong>`;
+                    if (summary.top_malicious_targets.length > 0) {
+                        topMaliciousHtml += '<ul>';
+                        summary.top_malicious_targets.forEach(item => {
+                            topMaliciousHtml += `<li>${item.path} (<span style="color:var(--red-alert);">${item.count}</span>x)</li>`;
+                        });
+                        topMaliciousHtml += '</ul>';
+                    } else {
+                        topMaliciousHtml += '<p class="detail">No data yet...</p>';
+                    }
+                    document.getElementById('summary-top-malicious-targets').innerHTML = topMaliciousHtml;
+
+                    // TOP_BLACKLISTED_NODES (somente contagem)
+                    document.getElementById('summary-blacklisted-nodes').textContent = summary.blacklisted_nodes_count;
+
+                    // UNUSUAL_METHODS
+                    let unusualMethodsHtml = `Unusual Methods: <strong>${summary.unusual_methods.length}</strong>`;
+                    if (summary.unusual_methods.length > 0) {
+                        unusualMethodsHtml += '<ul>';
+                        summary.unusual_methods.forEach(item => {
+                            unusualMethodsHtml += `<li>${item.method} (<span style="color:#ff0;">${item.count}</span>x)</li>`;
+                        });
+                        unusualMethodsHtml += '</ul>';
+                    } else {
+                        unusualMethodsHtml += '<p class="detail">No data yet...</p>';
+                    }
+                    document.getElementById('summary-unusual-methods').innerHTML = unusualMethodsHtml;
+
+                })
+                .catch(err => console.error('Failed to update summary data:', err));
+        }
+
+
+        // --- INICIALIZAÇÃO ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initAttackMap();
+            updateMap();
+            setInterval(updateMap, 15000);
+            
+            loadInitialAttackEvents();
+            connectAttackStream();
+
+            updateAccessList(); // Chamada inicial
+            setInterval(updateAccessList, 10000);
+
+            updateSummaryData(); // Chamada inicial para os resumos
+            setInterval(updateSummaryData, 20000); // Atualiza resumos a cada 20 segundos
+
+            const closeBtn = document.querySelector('.close-btn');
+            closeBtn.addEventListener('mouseenter', () => { cursor.style.backgroundColor = 'var(--red-alert)'; });
+            closeBtn.addEventListener('mouseleave', () => { cursor.style.backgroundColor = 'var(--matrix-green)'; });
+            
+            // Event listener para abrir modal de IP
+            document.getElementById('accessList').addEventListener('click', (e) => {
+                const card = e.target.closest('.access-card');
+                if (card) {
+                    showIntelModal(card.getAttribute('data-ip'));
+                }
+            });
+
+            // Event listener para fechar modal de IP clicando no overlay
+            document.getElementById('intelModal').addEventListener('click', (e) => {
+                if (e.target.id === 'intelModal') { closeIntelModal(); }
+            });
+
+            // Event listener para abrir modal genérico
+            document.querySelectorAll('.summary-box').forEach(box => {
+                box.addEventListener('click', (e) => {
+                    const endpoint = box.getAttribute('data-endpoint');
+                    const title = box.getAttribute('data-title');
+                    showGenericDataModal(endpoint, title);
+                });
+            });
+
+            // Event listener para fechar modal genérico clicando no overlay
+            document.getElementById('genericDataModal').addEventListener('click', (e) => {
+                if (e.target.id === 'genericDataModal') { closeGenericDataModal(); }
+            });
+
+            // NOVO: Event listener para o corpo da página para detectar cliques humanos
+            // Cada clique no corpo da página (que não seja um elemento interativo específico)
+            // envia um sinal ao backend.
+            document.body.addEventListener('click', (e) => {
+                if (Date.now() - lastTouchAt > 500) {
+                    telemetryState.clickCount += 1;
+                }
+                attackAudioArmed = true;
+                // Toca o som de ambiente apenas no primeiro clique, como antes.
+                // O `once: true` cuida disso para o keyboardSound.
+                // Essa parte foi movida para fora do `DOMContentLoaded` para ser chamada em cada clique.
+                // Na verdade, a reprodução do keyboardSound já tem um `once: true` no `DOMContentLoaded`,
+                // então ele só tocará uma vez quando a página carregar e o usuário clicar pela primeira vez.
+                // O importante é o fetch abaixo.
+                
+                // Envia o sinal de atividade humana para o backend
+                fetch('/human-activity-signal', { method: 'POST' })
+                    .catch(err => console.error("Failed to send human signal:", err));
+            });
+
+            document.body.addEventListener('touchstart', () => {
+                telemetryState.clickCount += 1;
+                lastTouchAt = Date.now();
+            }, { passive: true });
+
+            document.body.addEventListener('touchstart', () => {
+                attackAudioArmed = true;
+            }, { once: true });
+
+            window.addEventListener('scroll', () => {
+                const currentY = window.scrollY;
+                telemetryState.scrollPx += Math.abs(currentY - lastScrollY);
+                lastScrollY = currentY;
+            }, { passive: true });
+
+            window.addEventListener('resize', scheduleResizeTelemetry);
+            window.addEventListener('orientationchange', scheduleResizeTelemetry);
+
+            document.addEventListener('keydown', () => {
+                telemetryState.keyPressCount += 1;
+            });
+
+            // O `keyboardSound.play().catch(e => console.log("Audio play blocked."));` inicial
+            // estava aqui com `{ once: true }`. Para garantir que o som de ambiente
+            // comece a tocar APENAS no primeiro clique do usuário (política de autoplay),
+            // a melhor forma é manter o `once: true` original aqui:
+            document.body.addEventListener('click', () => {
+                keyboardSound.play().catch(e => console.log("Audio play blocked."));
+            }, { once: true });
+
+            sendTelemetry();
+            setInterval(sendTelemetry, 15000);
+
+            fetch('/log'); /* Removido: document.addEventListener('visibilitychange', ...) pois o autoplay já é gerenciado */
+            
+            document.addEventListener('visibilitychange', () => {
+                telemetryState.visibilityChanges += 1;
+                if (document.hidden) {
+                    keyboardSound.pause();
+                } else {
+                    if (!keyboardSound.paused) keyboardSound.play().catch(e => {});
+                }
+            });
+            
+            // Removido o evento de click inicial que estava com {once: true} e movi a lógica para o novo listener
+            // document.body.addEventListener('click', () => {
+            //     keyboardSound.play().catch(e => console.log("Audio play blocked."));
+            // }, { once: true });
+        });
+    </script>
+</body>
+</html>

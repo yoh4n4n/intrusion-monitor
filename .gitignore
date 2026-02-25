@@ -1,0 +1,9 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.log
+*.json
+ip_blacklist.txt
+system_kernel_log.json
+.env

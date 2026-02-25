@@ -1,0 +1,13 @@
+{% for access in accesses %}
+    <div class="access-card {% if access.is_blacklisted %}blacklisted-ip{% endif %} {% if access.is_human_interacted %}human-ip{% endif %}" data-ip="{{ access.ip }}"> {# AQUI A CORREÇÃO #}
+        <p class="ip-address">
+            {{ access.ip }}
+            {% if access.is_blacklisted %} <span class="blacklisted-indicator">// BLACKLISTED</span>{% endif %}
+            {% if access.is_human_interacted %} <span class="human-indicator">// HUMAN</span>{% endif %} {# E AQUI #}
+        </p>
+        <p>LAST_PING: {{ access.last_seen.strftime('%H:%M:%S') }}</p>
+        <p>GRID_LOCATION: {{ access.geo_info.location }}</p>
+        <p>REQUEST_COUNT: {{ access.hits }}</p>
+        <p>THREAT_LEVEL: <span style="color: {{ 'var(--red-alert)' if access.threat_level > 70 else '#ff0' if access.threat_level > 40 else 'var(--matrix-green)' }};">{{ access.threat_level }}%</span></p>
+    </div>
+{% endfor %}
