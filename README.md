@@ -1,43 +1,54 @@
-# 🕵️ Intrusion Monitoring Honeypot
+# 🕵️ Intrusion Monitor
+### A public live traffic observatory for security experimentation
 
-A lightweight cybersecurity honeypot designed to monitor, analyze and profile real-world attackers.
+Intrusion Monitor is an experimental cybersecurity project that visualizes real-world traffic interacting with an exposed web service.
 
-This project captures incoming traffic, enriches attacker intelligence and visualizes threat activity in real time.
+Instead of hiding attacker activity, this project makes it visible — providing a real-time, interactive dashboard where anyone can observe scanners, bots and automated probing behavior as it happens.
+
+---
+
+## 🧪 Project Philosophy
+
+This is **not** a production security tool.
+
+Intrusion Monitor was created as an open experiment focused on exploration, learning and curiosity about how the internet behaves when a service is exposed.
+
+The project is intentionally open and flexible:
+
+- Run it anywhere
+- Modify it freely
+- Break it, learn from it, improve it
+- Use it for research, education or experimentation
+
+The dashboard is public by design — transparency and observation are part of the concept.
 
 ---
 
 ## 🚀 Features
 
-- Live attack monitoring dashboard
-- IP intelligence enrichment (ASN, RDNS, Geo)
-- Threat scoring system
-- Human vs Bot behavior detection
-- Malicious path detection
-- Real-time attack feed (SSE)
-
----
-
-## 🧠 Purpose
-
-This project was created as a research and learning platform for:
-
-- Threat Intelligence
-- Honeypot engineering
-- Offensive security analysis
-- Behavioral attacker profiling
+- 🔴 Live traffic monitoring dashboard
+- 🌍 IP enrichment (GeoIP, ASN, RDNS)
+- 🤖 Automated scanner behavior visualization
+- 🧠 Threat scoring heuristics
+- 🧨 Malicious path detection
+- ⚡ Real-time attack feed (Server-Sent Events)
+- 📊 Interactive visualization of incoming activity
 
 ---
 
 ## ⚙️ Tech Stack
 
-- Python
+- Python 3
 - Flask
+- Jinja2
 - JavaScript
-- Threat intelligence APIs
+- External threat intelligence APIs
 
 ---
 
 ## ▶️ Running locally
+
+Clone the repository and run the application using a Python virtual environment.
 
 ### 1) Clone the repository
 
@@ -75,7 +86,7 @@ sudo apt install -y python3-venv
 
 ### 3) Run the application
 
-**Windows (PowerShell)**
+**Windows**
 
 ```powershell
 py intrusion_detector.py
@@ -93,8 +104,47 @@ python intrusion_detector.py
 http://127.0.0.1:5000
 ```
 
-The dashboard will also be accessible from other devices on your local network:
+The dashboard can also be accessed from other devices on your local network:
 
 ```
 http://<your-local-ip>:5000
 ```
+
+---
+
+## 📁 Project Structure
+
+```
+intrusion-monitor/
+│
+├── intrusion_detector.py
+├── templates/
+├── static/
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## ⚠️ Security & Deployment Notes
+
+This project is a **research and visualization experiment** and is not hardened for production environments.
+
+If you choose to expose it to the public internet, consider:
+
+- Running behind a reverse proxy or CDN
+- Applying rate limiting
+- Avoiding debug mode
+- Running inside an isolated environment (VM/container)
+- Avoiding elevated privileges
+
+Anyone deploying this project publicly is responsible for their own configuration and exposure risks.
+
+---
+
+## 👨‍💻 Author
+
+João Ramos Maciel  
+Cybersecurity Engineer — Offensive Security & IT Audit
+
+Building security experiments, automation tools and attack surface intelligence projects.
